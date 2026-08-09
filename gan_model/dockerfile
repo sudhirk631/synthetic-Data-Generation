@@ -15,7 +15,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
 # Copy trainer module
 COPY trainer trainer/
 
+# Create output directory
+RUN mkdir -p /app/output
+
 # Set entrypoint to run the training script with argument parsing support
 ENTRYPOINT ["python3", "-m", "trainer.train"]
-
-# runtime command: docker run -v /local/data:/data <image> --csv-path /data/input.csv --steps 2000
