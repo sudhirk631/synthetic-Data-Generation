@@ -1,7 +1,5 @@
 from setuptools import find_packages, setup
 
- 
-
 setup(
 
     name='my_gan_package',
@@ -34,6 +32,6 @@ setup(
 
     include_package_data=True,
 
-    description='GAN for synthetic PNR data',
+    description='GAN for synthetic data',
 
 )
