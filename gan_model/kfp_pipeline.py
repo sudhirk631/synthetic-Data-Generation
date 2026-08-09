@@ -12,17 +12,11 @@ from google.cloud import aiplatform
 
 from google_cloud_pipeline_components.types import artifact_types
 
- 
+PROJECT_ID = "project_id"
 
- 
-
-PROJECT_ID = "sab-dev-dap-aimlpipeline-4474"
-
-REGION = "us-central1"
+REGION = "region_id"
 
 PIPELINE_ROOT = "gs://gan_test_1/pipeline_root"
-
- 
 
 @dsl.pipeline(
 
@@ -38,7 +32,7 @@ def gan_packaged_pipeline(
 
         display_name: str = "gan-training-from-package",
 
-        container_uri: str = "us-central1-docker.pkg.dev/sab-dev-dap-aimlpipeline-4474/synthetic-data-generator/gan-training-container:latest",
+        container_uri: str = "region_id-docker.pkg.dev/project_id/synthetic-data-generator/gan-training-container:latest",
 
         machine_type: str = "n1-standard-4",
 
@@ -49,10 +43,6 @@ def gan_packaged_pipeline(
         training_steps: int = 2000
 
 ):
-
- 
-
- 
 
     custom_job_task = CustomTrainingJobOp(
 
@@ -96,10 +86,6 @@ def gan_packaged_pipeline(
 
     )
 
- 
-
- 
-
     model_importer = dsl.importer(
 
         artifact_uri=model_dir,
@@ -120,10 +106,6 @@ def gan_packaged_pipeline(
 
     model_importer.after(custom_job_task)
 
- 
-
- 
-
     model_upload_task = ModelUploadOp(
 
         project=PROJECT_ID,
@@ -142,9 +124,6 @@ def gan_packaged_pipeline(
 
     model_upload_task.after(model_importer)
 
- 
-
- 
 
     # endpoint_task = EndpointCreateOp(
 
@@ -179,14 +158,9 @@ def gan_packaged_pipeline(
     # )
 
     # deploy_task.after(endpoint_task)
-
- 
-
  
 
 if __name__ == "__main__":
-
- 
 
     Compiler().compile(
 
@@ -196,11 +170,8 @@ if __name__ == "__main__":
 
     )
 
- 
 
     aiplatform.init(project=PROJECT_ID, location=REGION)
-
- 
 
     pipeline_job = aiplatform.PipelineJob(
 
@@ -214,7 +185,7 @@ if __name__ == "__main__":
 
             "training_steps": 2000,
 
-            "container_uri": "us-central1-docker.pkg.dev/sab-dev-dap-aimlpipeline-4474/synthetic-data-generator/gan-training-container:latest",
+            "container_uri": "region_id-docker.pkg.dev/project_id/synthetic-data-generator/gan-training-container:latest",
 
             "machine_type": "n1-standard-4",
 
@@ -226,8 +197,6 @@ if __name__ == "__main__":
 
     )
 
- 
-
     job_schedule = aiplatform.PipelineJobSchedule(
 
         pipeline_job=pipeline_job,
@@ -236,10 +205,7 @@ if __name__ == "__main__":
 
     )
 
- 
-
     job_schedule.create("37 17 2 1 *")
 
- 
 
     print("Monthly pipeline schedule created successfully.")
