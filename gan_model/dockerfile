@@ -1,17 +1,21 @@
 # Use the base TensorFlow training image
-
 ARG IMAGE_REPO=<add the image repo name>
 
 FROM $IMAGE_REPO/base-images/ubi9/python-3.11:latest
 
-# Copy requirements and install dependencies
+# Set working directory
+WORKDIR /app
 
-COPY requirements.txt.
+# Copy requirements and install dependencies
+COPY requirements.txt .
 
 RUN python3 -m pip install --no-cache-dir --upgrade pip && \
-
     python3 -m pip install --no-cache-dir -r requirements.txt
 
-COPY  trainer trainer/
+# Copy trainer module
+COPY trainer trainer/
 
-ENTRYPOINT ["python","-m", "trainer.train"]"""
+# Set entrypoint to run the training script with argument parsing support
+ENTRYPOINT ["python3", "-m", "trainer.train"]
+
+# runtime command: docker run -v /local/data:/data <image> --csv-path /data/input.csv --steps 2000
