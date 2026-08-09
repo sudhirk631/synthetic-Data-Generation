@@ -20,3 +20,7 @@ RUN mkdir -p /app/output
 
 # Set entrypoint to run the training script with argument parsing support
 ENTRYPOINT ["python3", "-m", "trainer.train"]
+
+#docker commands to run:
+#docker build -t gan-training-container:latest .
+#docker push your-registry/gan-training-container:latest
