@@ -1,161 +1,126 @@
 from kfp import dsl
 from kfp.compiler import Compiler
-from google_cloud_pipeline_components.v1.custom_job import CustomTrainingJobOp
-from google_cloud_pipeline_components.v1.model import ModelUploadOp
-from google_cloud_pipeline_components.v1.endpoint import EndpointCreateOp, ModelDeployOp
-from google.cloud import aiplatform
-from google_cloud_pipeline_components.types import artifact_types
 
 import os
 import subprocess
 import argparse
 from pathlib import Path
 
-PROJECT_ID = "project_id"
-REGION = "region_id"
-PIPELINE_ROOT = "gs://gan_test_1/pipeline_root"
+# This file provides a Kubeflow Pipeline that is runnable on a local KFP installation
+# (e.g. Kubeflow Pipelines on Minikube / Kind) and also a simple "run locally" mode
+# that executes the training step directly on your laptop without any cloud dependencies.
+# It removes Google Cloud Pipeline Components and Vertex AI usage.
+
+# Defaults suitable for local demo
+DEFAULT_CONTAINER_IMAGE = "python:3.9-slim"
+DEFAULT_MODEL_DIR = "./tmp/gan_model"
+DEFAULT_OUTPUT_PATH = "./final_generated.csv"
 
 @dsl.pipeline(
-    name="gan-packaged-training-pipeline",
-    description="A pipeline that runs a packaged GAN trainer as a custom job.",
-    pipeline_root=PIPELINE_ROOT,
+    name="gan-local-training-pipeline",
+    description="A simplified KFP pipeline for a local/demo environment (no Vertex AI).",
+    pipeline_root="./pipeline_root",
 )
-def gan_packaged_pipeline(
-        display_name: str = "gan-training-from-package",
-        container_uri: str = "region_id-docker.pkg.dev/project_id/synthetic-data-generator/gan-training-container:latest",
-        machine_type: str = "n1-standard-4",
-        model_dir: str = "gs://gan_test_1/tmp/gan_model",
-        output_path: str = "gs://gan_test_1/final_generated.csv",
+def gan_local_pipeline(
+        display_name: str = "gan-training-local",
+        container_image: str = DEFAULT_CONTAINER_IMAGE,
+        model_dir: str = DEFAULT_MODEL_DIR,
+        output_path: str = DEFAULT_OUTPUT_PATH,
         training_steps: int = 2000
 ):
-    # NOTE: This function is unchanged for the GCP/KFP path. For local runs we bypass pipeline creation
-    custom_job_task = CustomTrainingJobOp(
-        project=PROJECT_ID,
-        location=REGION,
-        display_name=display_name,
-        worker_pool_specs=[
-            {
-                "machine_spec": {
-                    "machine_type": machine_type,
-                },
-                "replica_count": 1,
-                "container_spec": {
-                    "image_uri": container_uri,
-                    "args": [
-                        f"--steps={training_steps}",
-                        f"--model-dir={model_dir}",
-                        f"--output-path={output_path}",
-                    ],
-                },
-            }
+    """
+    Pipeline that runs the training container as a ContainerOp. This assumes you have
+    a runnable training entrypoint inside the container (for example `python -m gan_model.train`).
+
+    To run this pipeline locally you need a Kubeflow Pipelines installation (e.g. using
+    Minikube or Kind) and a container registry accessible from that cluster (or use a
+    local image builder in the cluster).
+    """
+
+    train = dsl.ContainerOp(
+        name="train-gan",
+        image=container_image,
+        command=["python", "-m", "gan_model.train"],
+        arguments=[
+            "--steps", str(training_steps),
+            "--model-dir", model_dir,
+            "--output-path", output_path,
         ],
     )
 
-    model_importer = dsl.importer(
-        artifact_uri=model_dir,
-        artifact_class=artifact_types.UnmanagedContainerModel,
-        metadata={
-            "containerSpec": {
-                "imageUri": container_uri
-            }
-        }
-    )
-    model_importer.after(custom_job_task)
+    # If you want a second step to consume the result you can add another ContainerOp
+    # that depends on `train` and reads `output_path`.
 
-    model_upload_task = ModelUploadOp(
-        project=PROJECT_ID,
-        location=REGION,
-        display_name="gan-model",
-        description="gan-model",
-        unmanaged_container_model=model_importer.output,
-        labels={},
-    )
-    model_upload_task.after(model_importer)
 
-    # Endpoint creation / deploy commented out in original; left out for brevity.
-
-def run_training_locally(training_steps: int, model_dir: str, output_path: str, container_uri: str = None):
+def run_training_locally(training_steps: int, model_dir: str, output_path: str):
     """
-    Run training locally for demo:
-    - If you have a local Python training script, call it (preferred).
-    - Or, if you use a module entrypoint, call `python -m gan_model.train`.
-    - If you built a local Docker image and want to run it, replace the command below.
+    Simple local runner for demo purposes. This runs the training entrypoint on the
+    local machine (no KFP). It tries the following in order:
+      1. `python -m gan_model.train` (preferred)
+      2. `gan_model/train.py` script if present
+
+    Adjust this function if your training entrypoint differs (for example if you want
+    to use Docker locally).
     """
-    # Ensure local paths exist
     model_dir_path = Path(model_dir)
     model_dir_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path_parent = Path(output_path).parent
-    output_path_parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Try to run a Python module entrypoint; edit to match your actual training script if needed.
-    # Preferred: have a module gan_model.train with a main() or runnable as `python -m gan_model.train`
-    python_cmd = ["python", "-m", "gan_model.train",
-                  f"--steps={training_steps}",
-                  f"--model-dir={model_dir}",
-                  f"--output-path={output_path}"]
+    module_cmd = ["python", "-m", "gan_model.train",
+                  "--steps", str(training_steps),
+                  "--model-dir", model_dir,
+                  "--output-path", output_path]
     try:
-        print("Running local training with:", " ".join(python_cmd))
-        subprocess.check_call(python_cmd)
+        print("Running local training via module:", " ".join(module_cmd))
+        subprocess.check_call(module_cmd)
+        return
     except subprocess.CalledProcessError:
-        # Fallback: try to run a script file if available
-        script = Path("gan_model/train.py")
-        if script.exists():
-            cmd = ["python", str(script),
-                   f"--steps={training_steps}",
-                   f"--model-dir={model_dir}",
-                   f"--output-path={output_path}"]
-            print("Falling back to script:", " ".join(cmd))
-            subprocess.check_call(cmd)
-        else:
-            # If neither module nor script exists, tell the user what to change
-            raise RuntimeError(
-                "Could not run training locally — no module 'gan_model.train' runnable and no gan_model/train.py found. "
-                "Either create a train.py or replace run_training_locally() with the appropriate command (e.g. docker run ...)."
-            )
+        print("Module run failed, trying script fallback...")
+
+    script = Path("gan_model/train.py")
+    if script.exists():
+        script_cmd = ["python", str(script),
+                      "--steps", str(training_steps),
+                      "--model-dir", model_dir,
+                      "--output-path", output_path]
+        print("Running local training via script:", " ".join(script_cmd))
+        subprocess.check_call(script_cmd)
+        return
+
+    raise RuntimeError(
+        "Could not find a training entrypoint. Create `gan_model/train.py` or make the package runnable as `python -m gan_model.train`, or update run_training_locally() to call your desired command.`"
+    )
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--local", action="store_true", help="Run training locally for demo (no KFP/GCP).")
+    parser.add_argument("--local", action="store_true", help="Run the training step locally (no KFP).")
+    parser.add_argument("--compile", action="store_true", help="Compile the KFP pipeline to a YAML file (gan_local_pipeline.yaml).")
+    parser.add_argument("--image", type=str, default=DEFAULT_CONTAINER_IMAGE, help="Container image to use for the ContainerOp when compiling/running on KFP.")
     parser.add_argument("--steps", type=int, default=2000)
-    parser.add_argument("--model-dir", type=str, default="./tmp/gan_model")
-    parser.add_argument("--output-path", type=str, default="./final_generated.csv")
-    parser.add_argument("--container-uri", type=str, default="region_id-docker.pkg.dev/project_id/synthetic-data-generator/gan-training-container:latest")
+    parser.add_argument("--model-dir", type=str, default=DEFAULT_MODEL_DIR)
+    parser.add_argument("--output-path", type=str, default=DEFAULT_OUTPUT_PATH)
     args = parser.parse_args()
 
-    # Also respect environment variable fallback
-    local_mode = args.local or os.environ.get("LOCAL_DEMO") == "1"
+    if args.local:
+        print("Running training locally (no KFP).")
+        run_training_locally(training_steps=args.steps, model_dir=args.model_dir, output_path=args.output_path)
+        print("Local training finished. Model dir:", args.model_dir, "Output:", args.output_path)
+        raise SystemExit(0)
 
-    if local_mode:
-        # Local demo: run training directly on the laptop and exit
-        print("Running in LOCAL demo mode. Training will run locally (no KFP/GCP).")
-        run_training_locally(training_steps=args.steps, model_dir=args.model_dir, output_path=args.output_path, container_uri=args.container_uri)
-        print("Local training finished. Model dir:", args.model_dir, "Output file:", args.output_path)
-    else:
-        # Original KFP/GCP flow: compile template and create a scheduled PipelineJob on Vertex AI
+    if args.compile:
+        print("Compiling pipeline to gan_local_pipeline.yaml")
         Compiler().compile(
-            pipeline_func=gan_packaged_pipeline,
-            package_path="gan_packaged_pipeline.yaml"
+            pipeline_func=gan_local_pipeline,
+            package_path="gan_local_pipeline.yaml"
         )
+        print("Compiled. You can upload gan_local_pipeline.yaml to your Kubeflow Pipelines UI or use the KFP SDK to submit it.")
+        raise SystemExit(0)
 
-        aiplatform.init(project=PROJECT_ID, location=REGION)
-        pipeline_job = aiplatform.PipelineJob(
-            display_name="gan-packaged-training-pipeline",
-            template_path="gan_packaged_pipeline.yaml",
-            pipeline_root=PIPELINE_ROOT,
-            parameter_values={
-                "training_steps": args.steps,
-                "container_uri": args.container_uri,
-                "machine_type": "n1-standard-4",
-                "model_dir": "gs://gan_test_1/tmp/gan_model",
-                "output_path": "gs://gan_test_1/final_generated_test.csv"
-            }
-        )
-
-        job_schedule = aiplatform.PipelineJobSchedule(
-            pipeline_job=pipeline_job,
-            display_name="monthly-gan-training-schedule"
-        )
-
-        # NOTE: keep scheduling only when actually on GCP; this will error locally.
-        job_schedule.create("37 17 2 1 *")
-        print("Monthly pipeline schedule created successfully.")
+    # Default behavior when neither --local nor --compile is passed: compile the pipeline
+    # so users get a YAML by running the script with no args (keeps behaviour similar to the original file).
+    Compiler().compile(
+        pipeline_func=gan_local_pipeline,
+        package_path="gan_local_pipeline.yaml"
+    )
+    print("Generated gan_local_pipeline.yaml. To run locally (no KFP), use --local. To compile only use --compile.")
