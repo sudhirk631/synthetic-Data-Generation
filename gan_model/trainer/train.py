@@ -2,7 +2,7 @@ import argparse
 import os
 import tempfile
 import subprocess
-from google.cloud import bigquery
+#from google.cloud import bigquery
 import numpy as np
 import datetime
 from sdmetrics.reports.single_table import QualityReport
@@ -13,7 +13,6 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import RMSprop,Adam
 import psutil
 from scipy.stats import norm
-from google.cloud import bigquery
 import joblib
 import pandas as pd
 from google.cloud import storage
@@ -84,763 +83,420 @@ class NullTransformer:
 
     def reverse_transform(self, data):
         """Revert the transform, replacing fill values back to nulls."""
-
         if self.nulls:
-
             if self._null_column:
-
                 isnull_mask = data[:, 1] > 0.5
-
                 data_col = pd.Series(data[:, 0])
-
             else:
-
                 data_col = pd.Series(data.ravel())
-
                 # Replace fill values with NaN using tolerance for floats
-
                 if pd.api.types.is_numeric_dtype(data_col):
-
                     isnull_mask = np.isclose(data_col.values, self._fill_value, atol=1e-8)
-
                 else:
-
                     isnull_mask = data_col == self._fill_value
-
  
-
             if isnull_mask.any():
-
                 if self.copy:
-
                     data_col = data_col.copy()
-
                 data_col.loc[isnull_mask] = np.nan
-
             return data_col
-
  
-
         # If no nulls detected during fit, return data as Series
-
         return pd.Series(data.ravel())
 
- 
-
- 
-
 class DatetimeTransformer:
-
     """Transformer for datetime data."""
-
- 
-
     null_transformer = None
-
     divider = None
-
  
-
     def __init__(self, nan='mean', null_column=False, strip_constant=False):
-
         self.nan = nan
-
         self.null_column = null_column
-
         self.strip_constant = strip_constant
 
- 
-
     def _find_divider(self, transformed):
-
         self.divider = 1
-
         multipliers = [10] * 9 + [60, 60, 24]
-
         for multiplier in multipliers:
-
             candidate = self.divider * multiplier
-
             if np.mod(transformed, candidate).any():
-
                 break
-
             self.divider = candidate
 
- 
-
     def _transform(self, datetimes):
-
         """Transform datetime values to integer (nanoseconds)."""
-
         datetimes_str = datetimes.astype(str)
-
         parsed = pd.to_datetime(datetimes_str, errors='coerce', infer_datetime_format=True)
-
         parsed = parsed.fillna(pd.to_datetime(datetimes_str, format='%H:%M:%S', errors='coerce'))
-
         parsed = parsed.fillna(pd.to_datetime(datetimes_str, format='%H:%M', errors='coerce'))
-
- 
-
         integers = parsed.values.astype('datetime64[ns]').astype(np.float64)
-
         integers[pd.isnull(parsed)] = np.nan
-
         transformed = pd.Series(integers)
 
         if self.strip_constant:
-
             self._find_divider(transformed.fillna(0))
-
-            transformed = transformed.floordiv(self.divider)
-
- 
+            transformed = transformed.floordiv(self.divider
 
         return transformed
 
- 
-
     def fit(self, data):
-
         if isinstance(data, np.ndarray):
-
             data = pd.Series(data)
-
+        
         transformed = self._transform(data)
-
-        print(transformed)
-
         self._min = transformed.min()
-
         range_val = transformed.max() - transformed.min()
-
         self._scale = range_val if range_val != 0 else 1
 
         # nanoseconds in a day (adjust for ns)
-
         self.null_transformer = NullTransformer(self.nan, self.null_column, copy=True)
-
         scaled = (transformed - self._min) / self._scale
-
         print(scaled)
-
         self.null_transformer.fit(scaled)
-
         self.num_dt_cols = self.null_transformer.num_dt_cols
 
- 
-
     def transform(self, data):
-
         if isinstance(data, np.ndarray):
-
             data = pd.Series(data.reshape(-1))
 
         data = self._transform(data)
-
         data_scaled = (data - self._min) / self._scale
-
         data_scaled = data_scaled.fillna(np.nan)
 
         return self.null_transformer.transform(data_scaled)
 
- 
-
     def reverse_transform(self, data):
-
         if self.nan is not None:
-
             data = self.null_transformer.reverse_transform(data)
 
         if isinstance(data, np.ndarray) and data.ndim == 2:
-
             data = data[:, 0]
 
         data = data.astype(np.float64) * self._scale + self._min
 
         if self.strip_constant:
-
             data = data * self.divider
 
         return pd.to_datetime(data)
 
- 
-
 class CategoricalTransformer:
-
+    
     def __init__(self, fuzzy=False, clip=False):
-
         self.fuzzy = fuzzy
-
         self.clip = clip
-
- 
 
     @staticmethod
 
     def _get_intervals(data):
-
         frequencies = data.value_counts(dropna=False)
-
         start = 0
-
         intervals = {}
-
         means = []
-
         starts = []
-
         elements = len(data)
 
         for value, frequency in frequencies.items():
-
             prob = frequency / elements
-
             end = start + prob
-
             mean = start + prob / 2
-
             std = prob / 6
-
             val = np.nan if pd.isnull(value) else value
-
             intervals[val] = (start, end, mean, std)
-
             means.append(mean)
-
             starts.append((val, start))
-
             start = end
 
         means = pd.Series(means, index=list(frequencies.keys()))
-
         starts_df = pd.DataFrame(starts, columns=['category', 'start']).set_index('start')
 
         return intervals, means, starts_df
 
- 
-
     def fit(self, data):
 
         if isinstance(data, np.ndarray):
-
             data = pd.Series(data)
 
         self.mapping = {}
-
         self.dtype = data.dtype
-
         self.intervals, self.means, self.starts = self._get_intervals(data)
-
         self._get_category_from_index = list(self.means.index).__getitem__
-
- 
-
+        
     def _transform_by_category(self, data):
 
         result = np.empty(len(data), dtype=float)
 
         for category, values in self.intervals.items():
-
             mean, std = values[2], values[3]
 
             if category is np.nan:
-
                 mask = data.isnull()
-
             else:
-
                 mask = data == category
 
             if self.fuzzy:
-
                 result[mask] = norm.rvs(mean, std, size=mask.sum())
-
             else:
-
                 result[mask] = mean
 
         return result
 
- 
-
     def _get_value(self, category):
 
         if pd.isnull(category):
-
             category = np.nan
-
         else:
-
             key_types = list(self.intervals.keys())
-
             if key_types:
-
                 key_type = type(key_types[0])
-
                 # Only cast if both are numbers, otherwise use as is
-
                 try:
-
                     if (isinstance(category, (int, float, np.number)) and
-
                             issubclass(key_type, (int, float, np.number))):
-
                         category = key_type(category)
-
                 except Exception:
-
                     pass
-
         if category not in self.intervals:
-
             raise KeyError(f"Category {category} not found in intervals keys: {list(self.intervals.keys())}")
 
         mean, std = self.intervals[category][2:4]
 
         if self.fuzzy:
-
             return norm.rvs(mean, std)
 
         return mean
 
- 
-
     def _transform_by_row(self, data):
-
         return data.fillna(np.nan).apply(self._get_value).to_numpy()
 
- 
-
     def transform(self, data):
-
         if not isinstance(data, pd.Series):
-
             data = pd.Series(data)
 
         return self._transform_by_row(data)
 
- 
-
     def _normalize(self, data):
-
         if self.clip:
-
             return data.clip(0, 1)
 
         return np.mod(data, 1)
 
- 
-
     def _reverse_transform_by_matrix(self, data):
-
         num_rows = len(data)
-
         num_categories = len(self.means)
-
         data_expanded = np.broadcast_to(data, (num_categories, num_rows)).T
-
         means_expanded = np.broadcast_to(self.means.values, (num_rows, num_categories))
-
         diffs = np.abs(data_expanded - means_expanded)
-
         indexes = np.argmin(diffs, axis=1)
-
         self._get_category_from_index = list(self.means.index).__getitem__
 
         return pd.Series(indexes).apply(self._get_category_from_index).astype(self.dtype)
 
- 
-
     def _get_category_from_start(self, value):
-
         lower = self.starts.loc[:value]
-
         return lower.iloc[-1].category
 
- 
-
     def _reverse_transform_by_row(self, data):
-
         return data.apply(self._get_category_from_start).astype(self.dtype)
 
- 
-
     def reverse_transform(self, data):
-
         if not isinstance(data, pd.Series):
-
             if len(data.shape) > 1:
-
                 data = data[:, 0]
-
             data = pd.Series(data)
-
         data = self._normalize(data)
-
         num_rows = len(data)
-
         num_categories = len(self.means)
-
         needed_memory = num_rows * num_categories * 8 * 3
-
         available_memory = psutil.virtual_memory().available
-
+        
         if available_memory > needed_memory:
-
             return self._reverse_transform_by_matrix(data)
-
         return self._reverse_transform_by_row(data)
 
- 
-
 def create_generator_combined(num_cat, num_dt):
-
     noise_input = Input(shape=(NOISE_DIM,))
-
- 
-
     # Categorical branch
-
     cat_branch = Dense(128)(noise_input)
-
     cat_branch = LeakyReLU(0.2)(cat_branch)
-
     cat_branch = BatchNormalization()(cat_branch) #add nodes
-
     cat_branch = Dense(num_cat, activation='sigmoid')(cat_branch)
 
- 
-
     # Datetime branch
-
     dt_branch = Dense(128)(noise_input)
-
     dt_branch = LeakyReLU(0.2)(dt_branch)
-
     dt_branch = BatchNormalization()(dt_branch)
-
     dt_branch = Dense(num_dt, activation='sigmoid')(dt_branch)
 
- 
-
     # Concatenate both branches
-
     combined_output = Concatenate()([cat_branch, dt_branch])
-
- 
-
     model = Model(inputs=noise_input, outputs=combined_output)
 
     return model
 
- 
-
 def create_critic_combined(num_cat, num_dt):
-
     data_input = Input(shape=(num_cat + num_dt,))
-
     x = Dense(256)(data_input)
-
     x = LeakyReLU(0.2)(x)
-
     x = Dropout(0.3)(x)
-
     x = Dense(128)(x)
-
     x = LeakyReLU(0.2)(x)
-
     x = Dropout(0.3)(x)
-
     output = Dense(1)(x)
-
     model = Model(inputs=data_input, outputs=output)
 
     return model
 
- 
-
 def critic_loss(real_output, fake_output):
-
     return tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
 
- 
-
- 
-
 def generator_loss(fake_output):
-
     return -tf.reduce_mean(fake_output)
 
- 
-
- 
-
- 
-
- 
-
 def decode_generated_dt(generated, dt_transformers, datetime_features):
-
     n_dt = len(datetime_features)
-
     dt_arrays = np.split(generated[:, :n_dt], n_dt, axis=1) if n_dt > 0 else []
-
     dt_decoded = []
-
     for arr, col in zip(dt_arrays, datetime_features):
-
         dt_decoded.append(dt_transformers[col].reverse_transform(arr.flatten()))
 
     data = {col: dt_decoded[i] for i, col in enumerate(datetime_features)}
-
     df = pd.DataFrame(data)
 
     return df
 
- 
-
- 
-
- 
-
 def decode_generated_cat(generated, cat_transformers, categorical_features):
-
     n_cat = len(categorical_features)
-
     cat_arrays = np.split(generated[:, :n_cat], n_cat, axis=1) if n_cat > 0 else []
-
     cat_decoded = []
-
     for arr, col in zip(cat_arrays, categorical_features):
-
         cat_decoded.append(cat_transformers[col].reverse_transform(arr.flatten()))
 
     data = {col: cat_decoded[i] for i, col in enumerate(categorical_features)}
-
     df = pd.DataFrame(data)
 
     return df
 
- 
-
- 
-
 def gradient_penalty(real_data, generated_data,crit):
-
     batch_size = tf.shape(real_data)[0]
-
     alpha = tf.random.uniform(shape=[batch_size, 1], minval=0.0, maxval=1.0)
-
     interpolated = real_data + alpha * (generated_data - real_data)
 
     with tf.GradientTape() as tape:
-
         tape.watch(interpolated)
-
         critic_output = crit(interpolated, training=True)
 
     gradients = tape.gradient(critic_output, interpolated)
-
     gradients = tf.reshape(gradients, [batch_size, -1])
-
     grad_norm = tf.norm(gradients, axis=1)
-
     gp = tf.reduce_mean((grad_norm - 1.0) ** 2)
 
     return gp
-
- 
-
+    
 def train_step(real_data,gen,crit,g_optimizer,d_optimizer):
-
     crit.trainable = True
-
     for _ in range(5):  # critic updates
-
         noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
 
         with tf.GradientTape() as tape:
-
             generated_data = gen(noise, training=True)
-
             real_noisy = real_data + tf.random.normal(shape=tf.shape(real_data), mean=0.0, stddev=0.01)
-
             real_output = crit(real_noisy, training=True)
-
             fake_output = crit(generated_data, training=True)
-
             gp = gradient_penalty(real_data, generated_data,crit)
-
             c_loss = tf.reduce_mean(fake_output) - tf.reduce_mean(real_output) + LAMBDA * gp
 
         c_gradients = tape.gradient(c_loss, crit.trainable_variables)
-
         d_optimizer.apply_gradients(zip(c_gradients, crit.trainable_variables))
 
     # Generator update
-
     crit.trainable = False
-
     noise = tf.random.normal([BATCH_SIZE, NOISE_DIM])
-
     with tf.GradientTape() as tape:
-
         generated_data = gen(noise, training=True)
-
         generated_data = tf.clip_by_value(generated_data, 0.0, 1.0)
-
         fake_output = crit(generated_data, training=True)
-
         g_loss = -tf.reduce_mean(fake_output)
 
     g_gradients = tape.gradient(g_loss, gen.trainable_variables)
-
     g_optimizer.apply_gradients(zip(g_gradients, gen.trainable_variables))
 
     return c_loss, g_loss, gp
 
- 
-
 def generate_synthetic(generator, num_samples):
-
     noise = np.random.normal(0, 1, (num_samples, NOISE_DIM))
-
     generated = generator.predict(noise, verbose=0)
 
     return generated  # scaled between 0-1
 
- 
-
 def decode_synthetic(synthetic, num_cat_features, cat_transformers, categorical_features,
-
                      dt_transformers, datetime_features, original_data,high_null):
 
     synthetic_cat = synthetic[:, :num_cat_features]
-
     synthetic_dt = synthetic[:, num_cat_features:]
 
- 
-
     # Decode categorical features
-
     cat_arrays = np.split(synthetic_cat, len(categorical_features), axis=1)
-
     cat_decoded = []
 
     for arr, col in zip(cat_arrays, categorical_features):
-
         cat_decoded.append(cat_transformers[col].reverse_transform(arr.flatten()))
 
     dt_arrays = np.split(synthetic_dt, len(datetime_features), axis=1)
-
     dt_decoded = []
-
     for arr, col in zip(dt_arrays, datetime_features):
-
         decoded = dt_transformers[col].reverse_transform(arr.flatten())
-
         # Format each datetime string to remove fractional seconds
-
         dt_decoded.append(decoded)
 
     # Create DataFrames
-
     df_cat = pd.DataFrame({col: cat_decoded[i] for i, col in enumerate(categorical_features)})
-
     df_dt = pd.DataFrame({col: dt_decoded[i] for i, col in enumerate(datetime_features)})
-
     nulls = pd.DataFrame({col: original_data[col] for col in high_null})
 
     return pd.concat([df_cat, df_dt,nulls], axis=1)
-
- 
-
+                         
 def preprocess_and_train(original_data, steps):
-
     time_cols_to_drop = [col for col in original_data.columns if col.lower().endswith('_time')]
-
     original_data.drop(columns=time_cols_to_drop, inplace=True, errors='ignore')
-
     date_features = []
-
     for col in original_data.columns:
-
         if pd.api.types.is_datetime64_any_dtype(original_data[col]):
-
             continue
-
         sample = original_data[col].dropna().head(1000).astype(str)
-
         if sample.empty:
-
             continue
-
         date_features.append(col)
-
         parsed = pd.to_datetime(sample, errors='coerce', infer_datetime_format=True)
-
         if parsed.notna().mean() > 0.8:
-
             original_data[col] = pd.to_datetime(original_data[col], errors='coerce', infer_datetime_format=True)
-
             # Standardize format as string
-
             original_data[col] = original_data[col].dt.strftime('%Y-%m-%d %H:%M:%S')
 
- 
-
     # --- Feature Setup ---
-
     high_null = [col for col in original_data.columns if original_data[col].isnull().mean() > 0.7]
-
- 
-
     categorical_features = [col for col in original_data.columns if col not in date_features and col not in high_null]
-
     datetime_features = [col for col in date_features if col in original_data.columns and col not in high_null]
 
- 
-
     #Transformers to convert cat and datetime fields
-
     cat_transformers = {col: CategoricalTransformer() for col in categorical_features}
-
     for col, tr in cat_transformers.items():
-
         tr.fit(original_data[col])
 
     cat_data = np.column_stack([tr.transform(original_data[col]) for col, tr in cat_transformers.items()])
-
     joblib.dump(cat_transformers, 'cat_transformers.pkl')
-
     # Fit datetime transformers per column
-
     dt_transformers = {col: DatetimeTransformer() for col in datetime_features}
-
     for col, tr in dt_transformers.items():
-
         tr.fit(original_data[col])
 
     joblib.dump(dt_transformers, 'dt_transformers.pkl')
 
- 
-
     # Transform
-
     dt_data = np.column_stack([tr.transform(original_data[col]) for col, tr in dt_transformers.items()])
-
- 
-
     cat_scaler = MinMaxScaler()
-
     cat_real = cat_scaler.fit_transform(cat_data)
-
     dt_scaler = MinMaxScaler()
-
     dt_real = dt_scaler.fit_transform(dt_data)
-
     NUM_DT = dt_real.shape[1]
 
     NUM_CAT = cat_real.shape[1]
@@ -898,15 +554,8 @@ def preprocess_and_train(original_data, steps):
  
 
 def main(args):
-
-    # Fetch data from bq
-
-    client = bigquery.Client(project="sab-dev-dap-aimlpipeline-4474")
-
-    df = client.query(args.query).to_dataframe()
-
- 
-
+    # Load data from CSV file
+    df = pd.read_csv(args.csv_path)
     # Runing preprocessing + training
 
     synthetic_df,gen = preprocess_and_train(df, args.steps)
@@ -1237,13 +886,12 @@ if __name__ == "__main__":
 
     parser.add_argument(
 
-        "--query",
-
+        "--csv-path",
         type=str,
 
-        default="SELECT * FROM `sab-dev-dap-aimlpipeline-4474.sampledomain_aiml.test_gan_pnr` ",
+        default="data/input.csv",
 
-        help="BigQuery SQL query for training data"
+        help="Path to input CSV file for training data"
 
     )
 
@@ -1288,4 +936,5 @@ if __name__ == "__main__":
     main(args)
 
 #fix for auth error was to run gcloud auth configure-docker us-docker.pkg.dev"""
+#to run this script the bash command is: python train.py --csv-path "path/to/your/data.csv" --steps 2000
 
