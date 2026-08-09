@@ -601,62 +601,36 @@ def main(args):
     report.generate(df, synthetic_df, feature_schema)
 
     # Evaluating Column Shapes: |██████████| 124/124 [00:01<00:00, 114.90it/s]|
-
     # Column Shapes Score: 74.03%
-
     # Modify the Data Preparation Stage if accuracy goes down
 
- 
-
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
-
     parser.add_argument(
-
         "--csv-path",
         type=str,
-
         default="data/input.csv",
-
         help="Path to input CSV file for training data"
-
     )
-
     parser.add_argument(
-
         "--model-dir",
-
         type=str,
-
         default="gs://gan_test_1/tmp/gan_model_direct",
-
         help="Path for saving trained model"
-
     )
 
     parser.add_argument(
-
         "--output-path",
-
         type=str,
-
         default="gs://gan_test_1/final_generated_direct.csv",
-
         help="Destination GCS path for synthetic CSV"
-
     )
 
     parser.add_argument(
-
         "--steps",
-
         type=int,
-
         default=2000,
-
         help="Number of training steps"
-
     )
 
     args = parser.parse_args()
