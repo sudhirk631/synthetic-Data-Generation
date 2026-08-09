@@ -36,49 +36,29 @@ Some of the common use cases of synthetic data generation are:
 Considering the above points, the initiatives was taken up to build an application to learn the patterns and be able to generate synthetic data. 
 The capabilities which are coded are as:
 
-- **Synthetic Data Generation**: Uses WGAN-GP to generate high-quality synthetic datasets from real data.
+- **Synthetic Data Generation**: Uses Wasserstein GAN with Gradient Penalty (WGAN-GP) to generate high-quality synthetic datasets from real data.
 
 - **Natural Language to SQL**: Converts user queries to BigQuery SQL using LLMs.
 
 - **Intelligent Routing**: Routes requests to batch inference or direct database queries based on request size.
 
-- **Monthly Retraining**: Automatically retrains the GAN model monthly using Google Cloud's Kubeflow Pipelines (KFP).
-
+- **Monthly Retraining**: Automatically retrains the GAN model monthly using Google Cloud's Kubeflow Pipelines (KFP)
  
-
-**Target Use Case**: Data masking and synthetic data generation for analytics on sensitive datasets.
-
- 
-
 ---
 
- 
-
-## GAN Model Architecture (WGAN-GP)
-
- 
+## GAN Model Architecture (WGAN-GP) 
 
 ### What is WGAN-GP?
-
- 
 
 **Wasserstein GAN with Gradient Penalty (WGAN-GP)** is an advanced generative model that improves upon standard GANs by:
 
 - Using the Wasserstein distance as a loss metric (more stable training)
-
 - Adding gradient penalty to enforce the Lipschitz constraint (prevents mode collapse)
-
 - Generating more realistic and diverse synthetic data
 
- 
-
-### Model Components
-
- 
+### Model Component
 
 Located in: [`gan_model/trainer/train1.py`](./gan_model/trainer/train1.py)
-
- 
 
 #### 1. **Generator**
 
@@ -99,8 +79,6 @@ def create_generator_combined(num_cat, num_dt):
     #   - Concatenate both branches for combined output
 
 ```
-
- 
 
 **Purpose**: Generates synthetic categorical and datetime features that closely mimic real data distribution.
 
@@ -125,16 +103,9 @@ def create_critic_combined(num_cat, num_dt):
     #   - Dense(1) [score, not sigmoid]
 
 ```
-
- 
-
 **Purpose**: Distinguishes between real and synthetic data using Wasserstein distance.
 
- 
-
 #### 3. **Loss Functions**
-
- 
 
 - **Critic Loss** (with Gradient Penalty):
 
@@ -147,7 +118,6 @@ def create_critic_combined(num_cat, num_dt):
   where λ = 10 (penalty weight)
 
  
-
 - **Generator Loss**:
 
   ```
@@ -156,51 +126,31 @@ def create_critic_combined(num_cat, num_dt):
 
   ```
 
- 
-
 - **Gradient Penalty**:
 
   Enforces the Lipschitz constraint by penalizing gradients that deviate from norm 1.
 
- 
-
 ### Data Transformers
-
- 
 
 #### 1. **CategoricalTransformer**
 
 - Maps categorical values to continuous ranges based on frequency
-
 - Uses fuzzy transformation with normal distribution sampling
-
 - Reverses transformation to recover original categories
-
- 
 
 #### 2. **DatetimeTransformer**
 
 - Converts datetime strings to integer timestamps (nanoseconds)
-
 - Applies min-max scaling
-
 - Handles null values with configurable fill strategies (mean, mode, or custom value)
-
- 
 
 #### 3. **NullTransformer (Optional)**
 
 - Manages features with high null rates (>70%)
-
 - Creates indicator columns for missing data
-
 - Preserves null patterns in synthetic data
 
- 
-
 ### Training Process
-
- 
 
 ```python
 
@@ -213,7 +163,6 @@ def train_step(real_data, gen, crit, g_optimizer, d_optimizer):
     #    - Compute Wasserstein distance with gradient penalty
 
     #    - Update critic weights
-
    
 
     # 2. Generator update
@@ -224,7 +173,6 @@ def train_step(real_data, gen, crit, g_optimizer, d_optimizer):
 
     #    - Update generator weights to fool critic
 
-   
 
     # Training runs for N steps (default: 2000)
 
@@ -232,46 +180,27 @@ def train_step(real_data, gen, crit, g_optimizer, d_optimizer):
 
     # Optimizer: Adam (lr=0.0002, beta_1=0.5)
 
-```
-
- 
+``` 
 
 ### Model Serving
-
- 
 
 - **Export Format**: TensorFlow SavedModel format
 
 - **Storage**: Google Cloud Storage (GCS)
 
 - **Location**: Specified via `--model-dir` parameter in training
-
- 
-
 ---
 
- 
-
-## KFP Pipeline for Monthly Retraining
-
- 
+## KFP Pipeline for Monthly Retraining 
 
 Located in: [`gan_model/kfp_pipeline.py`](./gan_model/kfp_pipeline.py)
 
- 
-
 ### Pipeline Overview
 
- 
-
-The pipeline automates monthly GAN retraining using Google Cloud's Kubeflow Pipelines (KFP).
-
- 
+The pipeline automates monthly GAN retraining using Google Cloud's Kubeflow Pipelines (KFP). 
 
 ### Pipeline Stages
-
  
-
 ```
 
 ┌─────────────────────────────────────┐
@@ -308,29 +237,23 @@ The pipeline automates monthly GAN retraining using Google Cloud's Kubeflow Pipe
 
 ```
 
- 
-
 ### Configuration
-
- 
 
 **Project Settings**:
 
 ```python
 
-PROJECT_ID = "sab-dev-dap-aimlpipeline-4474"
+PROJECT_ID = "project_id"
 
-REGION = "us-central1"
+REGION = "region_id"
 
 PIPELINE_ROOT = "gs://gan_test_1/pipeline_root"
 
 ```
 
- 
-
 **Default Parameters**:
 
-- **Container**: `us-central1-docker.pkg.dev/.../gan-training-container:latest`
+- **Container**: `region_id-docker.pkg.dev/.../gan-training-container:latest`
 
 - **Machine Type**: `n1-standard-4` (4 vCPUs, 15GB memory)
 
@@ -340,11 +263,9 @@ PIPELINE_ROOT = "gs://gan_test_1/pipeline_root"
 
 - **Synthetic Data Output**: `gs://gan_test_1/final_generated.csv`
 
- 
-
 ### Scheduling
 
-For testing purposes we have defined this as the cron job. **Must be modified before being pushed to production.**
+For testing purposes we have defined this as the cron job.
 
 ```
 
@@ -352,17 +273,11 @@ For testing purposes we have defined this as the cron job. **Must be modified be
 
 ```
 
- 
-
 ### Running the Pipeline Manually
-
- 
 
 ```bash
 
-python gan_model/kfp_pipeline.py
-
- 
+python gan_model/kfp_pipeline.py 
 
 # This:
 
@@ -373,12 +288,8 @@ python gan_model/kfp_pipeline.py
 # 3. Creates monthly schedule
 
 ```
-
  
-
 ### Pipeline Outputs
-
- 
 
 1. **Trained Model**: Saved to GCS at `{model_dir}`
 
@@ -386,44 +297,26 @@ python gan_model/kfp_pipeline.py
 
     - Contains generator and critic weights
 
- 
-
 2. **Synthetic Dataset**: CSV at `{output_path}`
 
     - Synthetic data from 1000 samples
 
     - Matches original schema
-
  
-
 3. **Quality Report**: Logged to pipeline output
 
     - SDMetrics QualityReport
-
     - Column shape similarity scores
-
- 
 
 ---
 
- 
-
 ## Multi-Agent System
-
- 
 
 Located in: [`Synthetic_Data/`](./Synthetic_Data/)
 
- 
-
 ### Agent Architecture
-
- 
-
 The system uses a two-tier agent architecture:
-
  
-
 ```
 
 ┌────────────────────────────────────────┐
@@ -459,20 +352,12 @@ The system uses a two-tier agent architecture:
 └─────────────────────┘      └──────────────────┘
 
 ```
-
  
-
 ### Entry Point Logic
-
- 
 
 Located in: [`Synthetic_Data/agent_setup.py`](./Synthetic_Data/agent_setup.py)
 
- 
-
-#### Root Agent Decision Flow
-
- 
+#### Root Agent Decision Flow 
 
 ```python
 
@@ -486,7 +371,6 @@ def root_agent():
 
     # 3. Route to appropriate sub-agent:
 
-   
 
     if is_synthetic_data_request(question):
 
@@ -502,13 +386,9 @@ def root_agent():
 
         return call_db_agent(question)
 
-```
-
- 
+``` 
 
 #### Request Routing Logic
-
- 
 
 | Request Type | Request Size | Route | Tool |
 
@@ -522,27 +402,19 @@ def root_agent():
 
 | Data Management | Any | CSV Save | `save_to_csv()` |
 
- 
 
-### Sub-Agents
-
- 
+### Sub-Agents 
 
 #### 1. **Database Agent** (NL2SQL)
-
- 
 
 Located in: [`Synthetic_Data/agent_setup.py`](./Synthetic_Data/agent_setup.py#L23)
 
  
-
 **Tools**:
 
 - `initial_bq_nl2sql`: Converts natural language to SQL
 
 - `run_bigquery_validation`: Validates and executes SQL
-
- 
 
 **Workflow**:
 
@@ -551,8 +423,6 @@ Located in: [`Synthetic_Data/agent_setup.py`](./Synthetic_Data/agent_setup.py#L2
 User Query → NL2SQL Translation → SQL Validation → BigQuery Execution → Results
 
 ```
-
- 
 
 **Example**:
 
@@ -578,19 +448,11 @@ Returns: 42,537 passengers
 
 ```
 
- 
-
 #### 2. **Batch Inference Agent**
 
- 
-
-Located in: [`Synthetic_Data/tools.py`](./Synthetic_Data/tools.py)
-
- 
+Located in: [`Synthetic_Data/tools.py`](./Synthetic_Data/tools.py) 
 
 **Function**: `batch_inferencing(request: str, tool_context: ToolContext)`
-
- 
 
 **Workflow**:
 
@@ -600,8 +462,6 @@ Large Request → Vertex AI Batch Prediction → Process Results → Save CSV �
 
 ```
 
- 
-
 **Use Cases**:
 
 - Generate > 10,000 synthetic records
@@ -610,17 +470,11 @@ Large Request → Vertex AI Batch Prediction → Process Results → Save CSV �
 
 - Large-scale synthetic dataset creation
 
- 
-
 ### System Components
-
- 
 
 #### LLM Module
 
 File: [`Synthetic_Data/llm_utils.py`](./Synthetic_Data/llm_utils.py)
-
- 
 
 **GeminiModel Class**:
 
@@ -632,13 +486,10 @@ File: [`Synthetic_Data/llm_utils.py`](./Synthetic_Data/llm_utils.py)
 
 - Response caching
 
- 
-
 #### SQL Translator
 
 File: [`Synthetic_Data/sql_translator.py`](./Synthetic_Data/sql_translator.py)
 
- 
 
 **SqlTranslator Class**:
 
@@ -648,15 +499,11 @@ File: [`Synthetic_Data/sql_translator.py`](./Synthetic_Data/sql_translator.py)
 
 - Extracts table schema
 
-- Uses SQLGlot for parsing
-
- 
+- Uses SQLGlot for parsing 
 
 #### Prompts
 
 File: [`Synthetic_Data/prompts.py`](./Synthetic_Data/prompts.py)
-
- 
 
 **Includes**:
 
@@ -668,13 +515,9 @@ File: [`Synthetic_Data/prompts.py`](./Synthetic_Data/prompts.py)
 
 - Few-shot examples for SQL generation
 
- 
-
 #### BigQuery Utils
 
-File: [`Synthetic_Data/bigquery_utils.py`](./Synthetic_Data/bigquery_utils.py)
-
- 
+File: [`Synthetic_Data/bigquery_utils.py`](./Synthetic_Data/bigquery_utils.py) 
 
 **Functions**:
 
@@ -684,13 +527,9 @@ File: [`Synthetic_Data/bigquery_utils.py`](./Synthetic_Data/bigquery_utils.py)
 
 - Schema extraction with sample rows
 
- 
-
 #### Tools
 
 File: [`Synthetic_Data/tools.py`](./Synthetic_Data/tools.py)
-
- 
 
 **Available Tools**:
 
@@ -702,19 +541,13 @@ File: [`Synthetic_Data/tools.py`](./Synthetic_Data/tools.py)
 
 4. `call_db_agent`: Invoke database sub-agent
 
- 
-
 ---
 
- 
-
-## Project Structure
-
- 
+## Project Structure 
 
 ```
 
-dap-cdpe.data-masking/
+data-masking/
 
 │
 
@@ -759,20 +592,11 @@ dap-cdpe.data-masking/
 └── README.md                         # This file
 
 ```
-
- 
-
 ---
-
- 
 
 ## Setup & Installation
 
- 
-
-### Prerequisites
-
- 
+### Prerequisites 
 
 - Python 3.9+
 
@@ -786,11 +610,7 @@ dap-cdpe.data-masking/
 
     - Service account with appropriate permissions
 
- 
-
 ### Installation
-
- 
 
 1. **Clone the repository**:
 
@@ -799,8 +619,6 @@ dap-cdpe.data-masking/
    git clone https://github.com/sabre-internal/dap-cdpe.data-masking
 
    ```
-
- 
 
 2. **Set up Google Cloud authentication**:
 
@@ -811,8 +629,6 @@ dap-cdpe.data-masking/
    gcloud auth application-default login
 
    ```
-
- 
 
 3. **Configure environment variables**:
 
@@ -828,19 +644,11 @@ dap-cdpe.data-masking/
 
    ```
 
- 
-
 ---
-
- 
 
 ## Usage
 
- 
-
 ### 1. Train GAN Model Manually (Has Default Params)
-
- 
 
 ```bash
 
@@ -858,8 +666,6 @@ python train1.py \
 
 ```
 
- 
-
 **Parameters**:
 
 - `--query`: BigQuery SQL for training data
@@ -870,11 +676,8 @@ python train1.py \
 
 - `--steps`: Number of training iterations
 
- 
 
-### 2. Deploy KFP Pipeline
-
- 
+### 2. Deploy KFP Pipeline 
 
 ```bash
 
@@ -884,8 +687,6 @@ python kfp_pipeline.py
 
 ```
 
- 
-
 This will:
 
 - Compile the pipeline to YAML
@@ -893,8 +694,6 @@ This will:
 - Submit it to Vertex AI Pipelines
 
 - Create a monthly schedule (1st of each month, 5:37 PM UTC)
-
- 
 
 ### 3. Run the ADK Agent
 
@@ -906,29 +705,17 @@ adk web
 
 ```
 
- 
-
 This will:
 
 - Trigger the ADK Agent which will be launched on your localhost for testing
 
 - Deploy to Agent Engine/ Cloud Run for company-wide access
 
- 
-
- 
-
----
-
- 
+--- 
 
 ## Performance & Monitoring
 
- 
-
 ### GAN Training Metrics
-
- 
 
 Monitor during training:
 
@@ -942,9 +729,7 @@ Step: 200, Critic Loss: -0.38, Generator Loss: -0.48, GP: 0.02
 
 Step: 2000, Critic Loss: -0.25, Generator Loss: -0.30, GP: 0.01
 
-```
-
- 
+``` 
 
 **Key Indicators**:
 
@@ -954,11 +739,8 @@ Step: 2000, Critic Loss: -0.25, Generator Loss: -0.30, GP: 0.01
 
 - **Gradient Penalty**: Should remain close to 0
 
- 
 
-### Data Quality
-
- 
+### Data Quality 
 
 Quality reports generated using SDMetrics:
 
@@ -972,19 +754,11 @@ Overall Score: 71.27%
 
 ```
 
- 
-
 **Threshold**: Aim for ≥ 70% column shape similarity.
 
- 
-
----
-
- 
+--- 
 
 ## Troubleshooting
-
- 
 
 ### Authentication Issues
 
@@ -994,15 +768,11 @@ Overall Score: 71.27%
 
 gcloud auth configure-docker us-docker.pkg.dev
 
- 
-
 # Fix gcloud auth
 
 gcloud auth application-default login
 
-```
-
- 
+``` 
 
 ### BigQuery Connection Issues
 
@@ -1012,8 +782,6 @@ gcloud auth application-default login
 
 - Ensure queries use fully qualified table names
 
- 
-
 ### Model Training Fails
 
 - Check training data quality
@@ -1021,8 +789,6 @@ gcloud auth application-default login
 - Verify null handling in data transformers
 
 - Increase training steps if loss isn't converging
-
- 
 
 ### Pipeline Scheduling
 
@@ -1032,15 +798,8 @@ gcloud auth application-default login
 
 - Review cron expression: `37 17 2 1 *`
 
- 
-
 ---
-
- 
-
 ## References
-
- 
 
 - [WGAN-GP Paper](https://arxiv.org/abs/1704.00028)
 
