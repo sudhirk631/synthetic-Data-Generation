@@ -1,179 +1,88 @@
 import argparse
-
 import os
-
 import tempfile
-
 import subprocess
-
 from google.cloud import bigquery
-
 import numpy as np
-
 import datetime
-
 from sdmetrics.reports.single_table import QualityReport
-
 from sklearn.preprocessing import MinMaxScaler
-
 import tensorflow as tf
-
 from tensorflow.keras.layers import Input, Dense, Concatenate, BatchNormalization, Dropout, LeakyReLU
-
 from tensorflow.keras.models import Model
-
 from tensorflow.keras.optimizers import RMSprop,Adam
-
 import psutil
-
 from scipy.stats import norm
-
 from google.cloud import bigquery
-
-#import gcsfs
-
 import joblib
-
 import pandas as pd
-
 from google.cloud import storage
-
 import zipfile
 
- 
-
- 
-
 NOISE_DIM = 128
-
 BATCH_SIZE = 64
-
 LAMBDA = 10
-
 NUM_CLASSES = 1
 
- 
-
 def upload_to_gcs(local_path, bucket_name, destination_blob_name):
-
     client = storage.Client()
-
     bucket = client.bucket(bucket_name)
-
     blob = bucket.blob(destination_blob_name)
-
     blob.upload_from_filename(local_path)
 
- 
-
 class NullTransformer:
-
     """Transformer for data that contains Null values."""
-
- 
-
     nulls = None
-
     _null_column = None
-
     _fill_value = None
 
- 
-
     def __init__(self, fill_value, null_column=None, copy=False):
-
         self.fill_value = fill_value
-
         self.null_column = null_column
-
         self.copy = copy
 
- 
-
     def fit(self, data):
-
         """Fit the transformer to the data."""
-
         if not isinstance(data, pd.Series):
-
             data = pd.Series(data)
-
         null_values = data.isnull()
-
         self.nulls = null_values.any()
-
         contains_not_null = not null_values.all()
 
- 
-
         if self.fill_value == 'mean':
-
             self._fill_value = data.mean() if contains_not_null else 0
-
         elif self.fill_value == 'mode':
-
             mode_vals = data.mode(dropna=True)
-
             self._fill_value = mode_vals[0] if not mode_vals.empty else 0
-
         else:
-
             self._fill_value = self.fill_value
 
- 
-
         if self.null_column is None:
-
             self._null_column = self.nulls
-
         else:
-
             self._null_column = self.null_column
-
- 
 
         self.num_dt_cols = 2 if self._null_column else 1
 
- 
-
     def transform(self, data):
-
         """Replace null values with the indicated fill_value and optionally create null indicator column."""
-
         if not isinstance(data, pd.Series):
-
             data = pd.Series(data)
 
- 
-
         if self.nulls:
-
             isnull = data.isnull()
-
             if self._fill_value is not None:
-
                 if not self.copy:
-
                     data.loc[isnull] = self._fill_value
-
                 else:
-
                     data = data.fillna(self._fill_value)
 
- 
-
             if self._null_column:
-
                 return pd.concat([data, isnull.astype(int)], axis=1).values
-
- 
 
         return data.values.reshape(-1, 1)
 
- 
-
     def reverse_transform(self, data):
-
         """Revert the transform, replacing fill values back to nulls."""
 
         if self.nulls:
