@@ -498,378 +498,106 @@ def preprocess_and_train(original_data, steps):
     dt_scaler = MinMaxScaler()
     dt_real = dt_scaler.fit_transform(dt_data)
     NUM_DT = dt_real.shape[1]
-
     NUM_CAT = cat_real.shape[1]
-
     combined_real_data = np.hstack([cat_real, dt_real])
-
     df1=pd.DataFrame(combined_real_data)
-
- 
-
     gen = create_generator_combined(NUM_CAT, NUM_DT)
-
     crit = create_critic_combined(NUM_CAT, NUM_DT)
-
     g_optimizer = Adam(learning_rate=0.0002,beta_1=0.5)
-
     d_optimizer = Adam(learning_rate=0.0002,beta_1=0.5)
-
- 
-
     real_data = tf.cast(combined_real_data, tf.float32)
 
     for step in range(steps):
-
         idx = np.random.randint(0, combined_real_data.shape[0], BATCH_SIZE)
-
         real_batch = tf.gather(real_data, idx)
-
         c_loss, g_loss, gp_val = train_step(real_batch,gen,crit,g_optimizer,d_optimizer)
 
         if step % 100 == 0:
-
             print(f"Step: {step}, Critic Loss: {c_loss.numpy()}, Generator Loss: {g_loss.numpy()}, GP: {gp_val.numpy()}")
-
- 
 
     synthetic_data = generate_synthetic(gen, 1000)
 
     print("Synthetic data shape:", synthetic_data.shape)
 
- 
-
     num_cat_features = cat_real.shape[1]
-
     synthetic_df = decode_synthetic(synthetic_data, num_cat_features, cat_transformers, categorical_features, dt_transformers, datetime_features,original_data,high_null)
 
     print(synthetic_df.head())
 
     return synthetic_df,gen
 
- 
-
- 
-
- 
-
 def main(args):
     # Load data from CSV file
     df = pd.read_csv(args.csv_path)
     # Runing preprocessing + training
-
     synthetic_df,gen = preprocess_and_train(df, args.steps)
-
     df = df[[col for col in df.columns if col in synthetic_df.columns]]
-
+   
     # Save the trained generator for serving
-
     export_path = args.model_dir
-
     with tempfile.TemporaryDirectory() as tmpdirname:
-
         local_export_path = os.path.join(tmpdirname, "gan_model")
-
         gen.export(local_export_path)
-
         # Upload the uncompressed model directory to GCS
-
         bucket_name = export_path.split('/')[2]
-
         destination_blob_prefix = '/'.join(export_path.split('/')[3:])
 
         for root, dirs, files in os.walk(local_export_path):
-
             for file in files:
-
                 file_path = os.path.join(root, file)
-
                 # Compute relative path inside the model directory
-
                 rel_path = os.path.relpath(file_path, local_export_path)
-
                 gcs_blob_name = destination_blob_prefix + '/' + rel_path
-
                 upload_to_gcs(file_path, bucket_name, gcs_blob_name)
 
     print(f" Model saved to {export_path}")
-
     with tempfile.TemporaryDirectory() as tmpdirname:
-
         local_export_path = os.path.join(tmpdirname, "gan_model")
-
         synthetic_df.to_csv(local_export_path, index=False)
 
         # Upload the CSV
-
         bucket_name = args.output_path.split('/')[2]
-
         destination_blob_name = '/'.join(args.output_path.split('/')[3:])
-
         upload_to_gcs(local_export_path, bucket_name, destination_blob_name)
 
     print(f" Synthetic data written to {args.output_path}")
 
     feature_schema = {
-
         "primary_key": None,
-
         "columns": {
-
-            "pnr_locator_id": {"sdtype":  "categorical"},
-
-            "pnr_locator_id_hash": {"sdtype": "categorical"},
-
-            "pnr_sequence":  {"sdtype": "categorical"},
-
-            "number_in_party": {"sdtype": "categorical"},
-
+            "passenger_id": {"sdtype":  "categorical"},
+            "passenger_id_hash": {"sdtype": "categorical"},
+            "passenger_version_sequence":  {"sdtype": "categorical"},
+            "number_of_passenger": {"sdtype": "categorical"},
             "number_of_infant": {"sdtype": "categorical"},
-
-            "source_system_id": {"sdtype": "categorical"},
-
+            "channel_id": {"sdtype": "categorical"},
             "number_of_air_segment": {"sdtype": "categorical"},
-
-            "pcc":  {"sdtype": "categorical"},
-
+            "agency_name":  {"sdtype": "categorical"},
             "year": {"sdtype": "categorical"},
-
             "month": {"sdtype": "categorical"},
-
             "day": {"sdtype": "categorical"},
-
-            "unique_id": {"sdtype": "categorical"},
-
-            "passenger_name_hash": {"sdtype": "categorical"},
-
             "primary_traveler_flag": {"sdtype":  "categorical"},
-
-            "name_id":  {"sdtype": "categorical"},
-
-            "name_association_id": {"sdtype": "categorical"},
-
-            "name_type": {"sdtype": "categorical"},
-
-            "traveller_seq_nbr": {"sdtype": "categorical"},
-
             "passenger_sequence": {"sdtype": "categorical"},
-
-            "unique_id_1": {"sdtype": "categorical"},
-
-            "segment_association_id": {"sdtype": "categorical"},
-
-            "od_seq":  {"sdtype": "categorical"},
-
-            "tripmarket_origin":  {"sdtype": "categorical"},
-
-            "tripmarket_destination": {"sdtype": "categorical"},
-
-            "active_segment_flag": {"sdtype": "categorical"},
-
-            "segment_number": {"sdtype": "categorical"},
-
-            "ordered_segment_number": {"sdtype": "categorical"},
-
-            "segment_type_cd": {"sdtype": "categorical"},
-
+            "origin_destination_seq":  {"sdtype": "categorical"},
             "flight_number": {"sdtype": "categorical"},
-
-            "operating_airline_cd": {"sdtype": "categorical"},
-
-            "operating_flight_number": {"sdtype": "categorical"},
-
             "airline_cd": {"sdtype": "categorical"},
-
             "action_cd": {"sdtype": "categorical"},
-
             "service_end_city": {"sdtype": "categorical"},
-
             "service_start_city": {"sdtype": "categorical"},
-
-            "number_in_party_1": {"sdtype": "categorical"},
-
-            "equipment_type":  {"sdtype": "categorical"},
-
-            "equipment_cd": {"sdtype": "categorical"},
-
-            "marketing_airline_cd": {"sdtype": "categorical"},
-
-            "marketing_flight_number": {"sdtype": "categorical"},
-
-            "operating_class_of_service": {"sdtype": "categorical"},
-
-            "marketing_class_of_service": {"sdtype": "categorical"},
-
+            "class_of_service": {"sdtype": "categorical"},
             "dayofweek_indicator": {"sdtype": "categorical"},
-
-            "pos_agency_city_cd": {"sdtype": "categorical"},
-
-            "pos_country_cd": {"sdtype": "categorical"},
-
-            "ancillary_id": {"sdtype": "categorical"},
-
-            "pdc_seat":  {"sdtype": "categorical"},
-
-            "rfic_cd": {"sdtype": "categorical"},
-
-            "rfic_subcode": {"sdtype": "categorical"},
-
-            "name_association_id_1": {"sdtype": "categorical"},
-
-            "pax_type": {"sdtype": "categorical"},
-
-            "segment_indicator": {"sdtype": "categorical"},
-
-            "number_of_items": {"sdtype": "categorical"},
-
-            "associated_segment_count": {"sdtype": "categorical"},
-
-            "status_indicator": {"sdtype": "categorical"},
-
-            "travel_portion":  {"sdtype": "categorical"},
-
-            "group_cd": {"sdtype": "categorical"},
-
-            "board_point": {"sdtype": "categorical"},
-
-            "off_point": {"sdtype": "categorical"},
-
-            "ttl_price":  {"sdtype": "categorical"},
-
-            "commercial_name": {"sdtype": "categorical"},
-
-            "airline_cd_1": {"sdtype": "categorical"},
-
-            "flight_number_1": {"sdtype": "categorical"},
-
-            "class_of_service":  {"sdtype": "categorical"},
-
-            "tvp_unique_id": {"sdtype": "categorical"},
-
-            "ae_portion_sequence": {"sdtype": "categorical"},
-
-            "tvp_airline_cd": {"sdtype": "categorical"},
-
-            "tvp_flight_number": {"sdtype":  "categorical"},
-
-            "tvp_operating_flight_number": {"sdtype": "categorical"},
-
-            "tvp_class_of_service": {"sdtype": "categorical"},
-
-            "tvp_board_point": {"sdtype": "categorical"},
-
-            "tvp_off_point": {"sdtype":  "categorical"},
-
-            "tvp_marketing_carrier":  {"sdtype": "categorical"},
-
-            "tvp_operating_carrier": {"sdtype": "categorical"},
-
-            "tvp_segment_association_id": {"sdtype": "categorical"},
-
-            "service_end_dt": {"sdtype": "datetime"},
-
-            "service_start_dt": {"sdtype": "datetime"},
-
-            "departure_datetime": {"sdtype": "datetime"},
-
-            "segment_booked_ts": {"sdtype": "datetime"},
-
-            "segment_booked_dt": {"sdtype": "datetime"},
-
+            "seat_category":  {"sdtype": "categorical"},
+            "departure_airport": {"sdtype": "categorical"},
+            "arrival_airport": {"sdtype": "categorical"},
             "departure_at_airport_ts": {"sdtype": "datetime"},
-
             "arrival_datetime": {"sdtype": "datetime"},
-
-            "tvp_departure_dt":  {"sdtype": "datetime"},
-
-            "departure_dt": {"sdtype": "datetime"},
-
-            "ingest_ts": {"sdtype": "datetime"},
-
-            "load_ts": {"sdtype": "datetime"},
-
-            "pnr_create_dt": {"sdtype": "datetime"},
-
-            "transmission_ts": {"sdtype": "datetime"},
-
-            "from_ts": {"sdtype": "datetime"},
-
-            "pnr_create_ts": {"sdtype": "datetime"},
-
-            "tty_airline_cd": {"sdtype":  "categorical"},
-
-            "oac_accounting_cd": {"sdtype": "categorical"},
-
-            "passenger_type": {"sdtype": "categorical"},
-
-            "frequent_flyer_id": {"sdtype":  "categorical"},
-
-            "ff_number": {"sdtype": "categorical"},
-
-            "frequent_flyer_tier_level": {"sdtype": "categorical"},
-
-            "ff_level_type": {"sdtype": "categorical"},
-
-            "ff_tier_level_number": {"sdtype": "categorical"},
-
-            "ff_supplier_cd": {"sdtype": "categorical"},
-
-            "agent_iata_number": {"sdtype": "categorical"},
-
-            "tier_level": {"sdtype": "categorical"},
-
-            "segment_group": {"sdtype": "categorical"},
-
-            "cabin_cd": {"sdtype": "categorical"},
-
-            "vendor_name": {"sdtype": "categorical"},
-
-            "supplier_name": {"sdtype": "categorical"},
-
-            "departure_ts": {"sdtype": "datetime"},
-
-            "arrival_ts": {"sdtype": "datetime"},
-
+            "departure_datetime":{"sdtype": "datetime"},
+            "cabin_category": {"sdtype": "categorical"},
             "frequent_traveler_number": {"sdtype": "categorical"},
-
-            "offer_snap_id": {"sdtype": "categorical"},
-
-            "frequent_flyer_tier": {"sdtype": "categorical"},
-
-            "eticket_coupon":  {"sdtype": "categorical"},
-
-            "eticket_number":  {"sdtype": "categorical"},
-
-            "emd_coupon":  {"sdtype": "categorical"},
-
-            "emd_number": {"sdtype": "categorical"},
-
-            "bag_weight": {"sdtype": "categorical"},
-
-            "ttl_price_currency": {"sdtype": "categorical"},
-
-            "booking_indicator": {"sdtype": "categorical"},
-
-            "purchase_datetime": {"sdtype": "datetime"},
-
-            "purchase_ts": {"sdtype": "datetime"},
-
-            "offer_id": {"sdtype": "categorical"},
-
-            "offer_item_id": {"sdtype": "categorical"},
-
-            "offer_source": {"sdtype": "categorical"},
-
-            "sequence_number": {"sdtype": "categorical"},
-
-            "equipment_type_1": {"sdtype": "categorical"}
-
         }
-
     }
 
     report = QualityReport()
-
     report.generate(df, synthetic_df, feature_schema)
 
     # Evaluating Column Shapes: |██████████| 124/124 [00:01<00:00, 114.90it/s]|
