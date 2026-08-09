@@ -1,14 +1,12 @@
 # Use the base TensorFlow training image
 
-ARG IMAGE_REPO=repository.sabre-gcp.com:9083
+ARG IMAGE_REPO=<add the image repo name>
 
-# hadolint ignore=DL3007
+FROM $IMAGE_REPO/base-images/ubi9/python-3.11:latest
 
-FROM $IMAGE_REPO/sabre/base-images/ubi9/python-3.11:latest
+# Copy requirements and install dependencies
 
-# Copy requirements and install dependencies (if you have a requirements.txt)
-
-COPY requirements.txt .
+COPY requirements.txt.
 
 RUN python3 -m pip install --no-cache-dir --upgrade pip && \
 
@@ -17,4 +15,3 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
 COPY  trainer trainer/
 
 ENTRYPOINT ["python","-m", "trainer.train"]"""
-
