@@ -1,3 +1,6 @@
+# Makefile is not needed for local laptop run. 
+#The makefile is used for CI/CD process to create build and deploy to environment which could be cloud platform.
+
 # Define variables
 
 PROJECT_ID := project_id
