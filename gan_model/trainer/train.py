@@ -2,7 +2,6 @@ import argparse
 import os
 import tempfile
 import subprocess
-#from google.cloud import bigquery
 import numpy as np
 import datetime
 from sdmetrics.reports.single_table import QualityReport
@@ -10,13 +9,13 @@ from sklearn.preprocessing import MinMaxScaler
 import tensorflow as tf
 from tensorflow.keras.layers import Input, Dense, Concatenate, BatchNormalization, Dropout, LeakyReLU
 from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import RMSprop,Adam
+from tensorflow.keras.optimizers import RMSprop, Adam
 import psutil
 from scipy.stats import norm
 import joblib
 import pandas as pd
-from google.cloud import storage
 import zipfile
+from pathlib import Path
 
 # ============================================================================
 # CONFIGURATION: Global hyperparameters for GAN training
@@ -27,15 +26,23 @@ LAMBDA = 10              # Gradient penalty weight for WGAN
 NUM_CLASSES = 1          # Number of output classes (not used in current implementation)
 
 # ============================================================================
-# STEP 1: CLOUD STORAGE - GCS Upload Function
-# Uploads generated models and synthetic data to Google Cloud Storage
+# STEP 1: LOCAL STORAGE - File Save Functions
+# Saves generated models and synthetic data locally (replaces GCS for local dev)
 # ============================================================================
-def upload_to_gcs(local_path, bucket_name, destination_blob_name):
-    """Upload a local file to Google Cloud Storage."""
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(destination_blob_name)
-    blob.upload_from_filename(local_path)
+def save_to_local(local_path, output_path):
+    """Save a local file to output directory."""
+    output_dir = Path(output_path).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    if os.path.isfile(local_path):
+        # Single file
+        import shutil
+        shutil.copy(local_path, output_path)
+    elif os.path.isdir(local_path):
+        # Directory - copy all files
+        import shutil
+        shutil.copytree(local_path, output_path, dirs_exist_ok=True)
+    print(f"Saved to {output_path}")
 
 # ============================================================================
 # STEP 2: DATA TRANSFORMATION - NullTransformer Class
@@ -109,13 +116,13 @@ class NullTransformer:
                     isnull_mask = np.isclose(data_col.values, self._fill_value, atol=1e-8)
                 else:
                     isnull_mask = data_col == self._fill_value
- 
+  
             if isnull_mask.any():
                 if self.copy:
                     data_col = data_col.copy()
                 data_col.loc[isnull_mask] = np.nan
             return data_col
- 
+  
         # If no nulls detected during fit, return data as Series
         return pd.Series(data.ravel())
 
@@ -128,7 +135,7 @@ class DatetimeTransformer:
     """Transformer for datetime data."""
     null_transformer = None
     divider = None
- 
+  
     def __init__(self, nan='mean', null_column=False, strip_constant=False):
         """Initialize datetime transformer with null handling strategy."""
         self.nan = nan
@@ -560,8 +567,12 @@ def decode_synthetic(synthetic, num_cat_features, cat_transformers, categorical_
 # Orchestrates data loading, transformation, model creation, and training loop
 # ============================================================================
                          
-def preprocess_and_train(original_data, steps):
+def preprocess_and_train(original_data, steps, output_dir):
     """Main preprocessing and training pipeline."""
+    
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
     
     # Remove time-specific columns that shouldn't be learned
     time_cols_to_drop = [col for col in original_data.columns if col.lower().endswith('_time')]
@@ -600,7 +611,9 @@ def preprocess_and_train(original_data, steps):
     # Transform categorical data to continuous values
     cat_data = np.column_stack([tr.transform(original_data[col]) for col, tr in cat_transformers.items()])
     # Save transformers for later inference
-    joblib.dump(cat_transformers, 'cat_transformers.pkl')
+    cat_transformers_path = output_path / 'cat_transformers.pkl'
+    joblib.dump(cat_transformers, cat_transformers_path)
+    print(f"Saved categorical transformers to {cat_transformers_path}")
     
     # PHASE 4: Fit and transform datetime features
     print("Fitting datetime transformers...")
@@ -609,7 +622,9 @@ def preprocess_and_train(original_data, steps):
         tr.fit(original_data[col])
 
     # Save transformers for later inference
-    joblib.dump(dt_transformers, 'dt_transformers.pkl')
+    dt_transformers_path = output_path / 'dt_transformers.pkl'
+    joblib.dump(dt_transformers, dt_transformers_path)
+    print(f"Saved datetime transformers to {dt_transformers_path}")
 
     # Transform datetime data to continuous values
     dt_data = np.column_stack([tr.transform(original_data[col]) for col, tr in dt_transformers.items()])
@@ -672,11 +687,15 @@ def preprocess_and_train(original_data, steps):
 
 # ============================================================================
 # STEP 14: MAIN EXECUTION - Orchestrates entire pipeline
-# Loads data, trains model, generates synthetic data, saves outputs
+# Loads data, trains model, generates synthetic data, saves outputs (LOCAL)
 # ============================================================================
 
 def main(args):
-    """Main entry point: load data, train GAN, generate and save synthetic data."""
+    """Main entry point: load data, train GAN, generate and save synthetic data (LOCAL)."""
+    
+    # Create output directory structure
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Load original training data from CSV
     print(f"Loading data from {args.csv_path}...")
@@ -684,45 +703,22 @@ def main(args):
     
     # Run full preprocessing and training pipeline
     print("Starting preprocessing and training...")
-    synthetic_df, gen = preprocess_and_train(df, args.steps)
+    synthetic_df, gen = preprocess_and_train(df, args.steps, output_dir)
     
     # Align columns between original and synthetic data
     df = df[[col for col in df.columns if col in synthetic_df.columns]]
    
-    # SAVE PHASE 1: Save trained generator model to GCS
+    # SAVE PHASE 1: Save trained generator model locally
     print("Saving trained generator model...")
-    export_path = args.model_dir
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        local_export_path = os.path.join(tmpdirname, "gan_model")
-        gen.export(local_export_path)
-        
-        # Upload the uncompressed model directory to GCS
-        bucket_name = export_path.split('/')[2]
-        destination_blob_prefix = '/'.join(export_path.split('/')[3:])
-
-        # Upload all model files to GCS
-        for root, dirs, files in os.walk(local_export_path):
-            for file in files:
-                file_path = os.path.join(root, file)
-                # Compute relative path inside the model directory
-                rel_path = os.path.relpath(file_path, local_export_path)
-                gcs_blob_name = destination_blob_prefix + '/' + rel_path
-                upload_to_gcs(file_path, bucket_name, gcs_blob_name)
-
-    print(f"Model saved to {export_path}")
+    model_output_path = output_dir / "gan_model"
+    gen.save(str(model_output_path))
+    print(f"Model saved to {model_output_path}")
     
-    # SAVE PHASE 2: Save synthetic data CSV to GCS
+    # SAVE PHASE 2: Save synthetic data CSV locally
     print("Saving synthetic data to CSV...")
-    with tempfile.TemporaryDirectory() as tmpdirname:
-        local_export_path = os.path.join(tmpdirname, "gan_model")
-        synthetic_df.to_csv(local_export_path, index=False)
-
-        # Upload the CSV to GCS
-        bucket_name = args.output_path.split('/')[2]
-        destination_blob_name = '/'.join(args.output_path.split('/')[3:])
-        upload_to_gcs(local_export_path, bucket_name, destination_blob_name)
-
-    print(f"Synthetic data written to {args.output_path}")
+    synthetic_csv_path = output_dir / "synthetic_data.csv"
+    synthetic_df.to_csv(synthetic_csv_path, index=False)
+    print(f"Synthetic data written to {synthetic_csv_path}")
 
     # EVALUATION PHASE: Generate quality report comparing synthetic to real data
     print("Generating quality report...")
@@ -761,13 +757,12 @@ def main(args):
         }
     }
 
-    report = QualityReport()
-    report.generate(df, synthetic_df, feature_schema)
-
-    # Quality report shows metrics like Column Shapes, Semantic Similarity, etc.
-    # Evaluating Column Shapes: |██████████| 124/124 [00:01<00:00, 114.90it/s]|
-    # Column Shapes Score: 74.03%
-    # Modify the Data Preparation Stage if accuracy goes down
+    try:
+        report = QualityReport()
+        report.generate(df, synthetic_df, feature_schema)
+        print("Quality report generated successfully!")
+    except Exception as e:
+        print(f"Note: Quality report generation failed (optional): {e}")
 
 # ============================================================================
 # STEP 15: SCRIPT ENTRY POINT - Parse arguments and run main()
@@ -783,17 +778,10 @@ if __name__ == "__main__":
         help="Path to input CSV file for training data"
     )
     parser.add_argument(
-        "--model-dir",
+        "--output-dir",
         type=str,
-        default="gs://gan_test_1/tmp/gan_model_direct",
-        help="Path for saving trained model"
-    )
-
-    parser.add_argument(
-        "--output-path",
-        type=str,
-        default="gs://gan_test_1/final_generated_direct.csv",
-        help="Destination GCS path for synthetic CSV"
+        default="./output",
+        help="Local directory for saving model and synthetic data"
     )
 
     parser.add_argument(
@@ -809,17 +797,22 @@ if __name__ == "__main__":
     main(args)
 
 # ============================================================================
-# SETUP NOTES & USAGE INSTRUCTIONS
+# SETUP NOTES & USAGE INSTRUCTIONS FOR WINDOWS
 # ============================================================================
-# Setup requirement: Configure Docker authentication for GCS
-# Run once: gcloud auth configure-docker us-docker.pkg.dev
+# Prerequisites (Windows):
+# 1. Install Python 3.11+ from https://www.python.org
+# 2. Create virtual environment: python -m venv venv
+# 3. Activate virtual environment: venv\Scripts\activate
+# 4. Install dependencies: pip install -r requirements.txt
 #
-# To run this script, use the following bash command:
-# python train.py --csv-path "path/to/your/data.csv" --steps 2000
+# To run this script on Windows, use:
+# python trainer/train.py --csv-path "path/to/your/data.csv" --steps 2000
 #
 # Optional arguments:
 #   --csv-path: Path to input CSV file (default: data/input.csv)
-#   --model-dir: GCS path for saving model (default: gs://gan_test_1/tmp/gan_model_direct)
-#   --output-path: GCS path for synthetic CSV (default: gs://gan_test_1/final_generated_direct.csv)
+#   --output-dir: Local directory for saving (default: ./output)
 #   --steps: Number of training iterations (default: 2000)
+#
+# Example with custom paths:
+# python trainer/train.py --csv-path "C:\data\input.csv" --output-dir "C:\gan_output" --steps 500
 # ============================================================================
